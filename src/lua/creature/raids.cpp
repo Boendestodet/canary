@@ -223,8 +223,18 @@ void Raid::startRaid() {
 		nextEventEvent = g_dispatcher().scheduleEvent(
 			raidEvent->getDelay(), [this, raidEvent] { executeRaidEvent(raidEvent); }, "Raid::executeRaidEvent"
 		);
+		Database &db = Database::getInstance();
+        std::ostringstream query;
+        query << "INSERT INTO raids (name, start_time) VALUES ('"
+              << name << "', NOW())";
+
+        if (db.executeQuery(query.str())) {
+            g_logger().info("[Raids] Raid {} has started", name);
+        } else {
+            g_logger().error("[Raids] Failed to log raid {} start to database", name);
+        }
 	} else {
-		g_logger().warn("[raids] Raid {} has no events", name);
+		g_logger().warn("[Raids] Raid {} has no events", name);
 		resetRaid();
 	}
 }
