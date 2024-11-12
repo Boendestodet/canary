@@ -1346,7 +1346,8 @@ void ProtocolGame::parsePacketFromDispatcher(NetworkMessage &msg, uint8_t recvby
 		case 0xF1:
 			parseQuestLine(msg);
 			break;
-		// case 0xF2: parseRuleViolationReport(msg); break;
+		case 0xF2: parseRuleViolationReport(msg); 
+			break;
 		case 0xF3: /* get object info */
 			break;
 		case 0xF4:
@@ -2293,19 +2294,41 @@ void ProtocolGame::parseConfigureShowOffSocket(NetworkMessage &msg) {
 }
 
 void ProtocolGame::parseRuleViolationReport(NetworkMessage &msg) {
-	uint8_t reportType = msg.getByte();
-	uint8_t reportReason = msg.getByte();
-	const std::string &targetName = msg.getString();
-	const std::string &comment = msg.getString();
+    uint8_t reportType = msg.getByte();
+    uint8_t reportReason = msg.getByte();
+	const std::string &accuser = player->getName();
+    const std::string &accused = msg.getString();
+    const std::string &comment = msg.getString();
 	std::string translation;
-	if (reportType == REPORT_TYPE_NAME) {
+
+    if (reportType == REPORT_TYPE_NAME) {
+        translation = msg.getString();
+    } else if (reportType == REPORT_TYPE_STATEMENT) {
+        translation = msg.getString();
+    } else if (reportType == REPORT_TYPE_BOT) {
 		translation = msg.getString();
-	} else if (reportType == REPORT_TYPE_STATEMENT) {
-		translation = msg.getString();
-		msg.get<uint32_t>(); // statement id, used to get whatever player have said, we don't log that.
 	}
 
-	g_game().playerReportRuleViolationReport(player->getID(), targetName, reportType, reportReason, comment, translation);
+    // Log to the database
+    Database &db = Database::getInstance();
+    std::ostringstream query;
+    query << "INSERT INTO player_reports (accuser, accused, report_type, report_reason, comment, translation, report_time) VALUES ("
+          << "'" << accuser << "', "
+          << "'" << accused << "', "
+          << static_cast<int>(reportType) << ", "
+          << static_cast<int>(reportReason) << ", "
+          << "'" << comment << "', "
+          << "'" << translation << "', "
+          << "NOW())";
+
+    if (db.executeQuery(query.str())) {
+        g_logger().info("[Violation Report] Violation report against {} by {}", accused, accuser);
+    } else {
+        g_logger().error("[Violation Report] Failed to log violation report against {} by {}", accused, accuser);
+    }
+
+    g_game().playerReportRuleViolationReport(player->getID(), accused, reportType, reportReason, comment, translation);
+		g_webhook().sendMessage(fmt::format(":pencil: [Violation Report] against **{}** by **{}**", accused, accuser));
 }
 
 void ProtocolGame::parseBestiarysendRaces() {
@@ -3032,13 +3055,38 @@ void ProtocolGame::parseBestiarysendCreatures(NetworkMessage &msg) {
 
 void ProtocolGame::parseBugReport(NetworkMessage &msg) {
 	uint8_t category = msg.getByte();
+	const std::string &playerName = player->getName();
 	std::string message = msg.getString();
 
 	Position position;
 	if (category == BUG_CATEGORY_MAP) {
 		position = msg.getPosition();
+    } else if (category == BUG_CATEGORY_TYPO) {
+		position = player->getPosition();
+	} else if (category == BUG_CATEGORY_TECHNICAL) {
+		position = player->getPosition();
+	} else if (category == BUG_CATEGORY_OTHER) {
+		position = player->getPosition();
 	}
 
+	// Log to the database
+    Database &db = Database::getInstance();
+    std::ostringstream query;
+    query << "INSERT INTO bug_reports (player, message, position, category, report_time) VALUES ("
+          << "'" << playerName << "', "
+          << "'" << message << "', "
+		  << "'" << position << "', "
+		  << static_cast<int>(category) << ", "
+          << "NOW())";
+
+    if (db.executeQuery(query.str())) {
+		uint32_t lastId = db.getLastInsertId();
+        g_logger().info("[Bug Report] #{} - {} - ({}) ", lastId, playerName, message);
+				g_webhook().sendMessage(fmt::format(":broken_chain: [Bug Report] #{} - **{}** - ({})", lastId, playerName, message));
+    } else {
+        g_logger().error("[Bug Report] Faild to log {} reported {}", playerName, message);
+    }
+	
 	g_game().playerReportBug(player->getID(), message, position, category);
 }
 
